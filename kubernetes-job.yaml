@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: docker-rds
+  namespace: default
+spec:
+  template:
+    metadata:
+      annotations:
+        iam.amazonaws.com/role: kubernetes-docker-rds
+    spec:
+      containers:
+      - name: docker-rds
+        image: polarn/docker-rds:0.0.3
+        imagePullPolicy: Always
+        env:
+        - name: AWS_DEFAULT_REGION
+          value: eu-west-1
+        - name: DATABASE_MASTER_USERNAME
+          value: ssm:/project/dev/aurora/username
+        - name: DATABASE_MASTER_PASSWORD
+          value: ssm:/project/dev/aurora/password
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: docker-rds-secret
+              key: url
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: docker-rds-secret
+              key: username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: docker-rds-secret
+              key: password
+      restartPolicy: Never
+  backoffLimit: 4
