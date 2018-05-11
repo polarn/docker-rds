@@ -1,66 +1,85 @@
 #!/usr/bin/env bash
 
-if [[ -z ${DATABASE_USERNAME+x} ]]; then
-  echo "Missing DATABASE_USERNAME"
+TRUE=$(which true)
+
+if [[ -z ${DATABASE_HOSTNAME+x} ]]; then
+  echo "Missing DATABASE_HOSTNAME"
   exit 1
 fi
 
-if [[ -z ${DATABASE_PASSWORD+x} ]]; then
-  echo "Missing DATABASE_PASSWORD"
-  exit 1
+if [[ -z ${DATABASE_PORT+x} ]]; then
+	echo "Setting default value for DATABASE_PORT=3306"
+	DATABASE_PORT=3306
 fi
-
-if [[ -z ${DATABASE_URL+x} ]]; then
-  echo "Missing DATABASE_URL"
-  exit 1
-else
-  if ! [[ ${DATABASE_URL} =~ ^jdbc:mysql:// ]]; then
-    echo "DATABASE_URL=${DATABASE_URL} is not correctly formatted JDBC + MySQL."
-    exit 1
-  fi
-
-  DATABASE_HOSTNAME=$(echo $DATABASE_URL | sed 's|^jdbc:mysql://||' | cut -d ':' -f 1)
-  DATABASE_PORT=$(echo $DATABASE_URL | sed 's|^jdbc:mysql://||' | cut -d ':' -f 2 | cut -d '/' -f 1)
-  DATABASE_NAME=$(echo $DATABASE_URL | sed 's|^jdbc:mysql://||' | cut -d '/' -f 2 | cut -d '?' -f 1)
-fi
-
-# -- Parse AWS SSM parameters
-
-set -e
 
 if [[ -z ${DATABASE_MASTER_USERNAME+x} ]]; then
   echo "Missing DATABASE_MASTER_USERNAME"
   exit 1
-else
-  if [[ ${DATABASE_MASTER_USERNAME} =~ ^ssm: ]]; then
-    DATABASE_MASTER_USERNAME=$(aws ssm get-parameter --name $(echo ${DATABASE_MASTER_USERNAME} | cut -d ':' -f 2) --with-decryption --query Parameter.Value --output text);
-  fi
 fi
 
 if [[ -z ${DATABASE_MASTER_PASSWORD+x} ]]; then
   echo "Missing DATABASE_MASTER_PASSWORD"
   exit 1
-else
-  if [[ ${DATABASE_MASTER_PASSWORD} =~ ^ssm: ]]; then
-    DATABASE_MASTER_PASSWORD=$(aws ssm get-parameter --name $(echo ${DATABASE_MASTER_PASSWORD} | cut -d ':' -f 2) --with-decryption --query Parameter.Value --output text);
-  fi
 fi
+
+function check_database() {
+	database=$1
+	username=$2
+	password=$3
+
+	if [[ $database == "" || $username == "" || $password == "" ]]; then
+		echo "check_database: Missing database, username or password"
+		return 1
+	fi
+
+  sql="SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '"${database}"'"
+	result=$(echo $sql | mysql -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -p${DATABASE_MASTER_PASSWORD})
+	if [[ ${result} != "" ]]; then
+    echo "check_database: database $database already exists"
+		return 1
+	fi
+
+  echo "check_database: database $database does not exist"
+	return 0
+}
+
+function create_database() {
+	database=$1
+	username=$2
+	password=$3
+
+	if [[ $database == "" || $username == "" || $password == "" ]]; then
+		echo "create_database: Missing database, username or password"
+		return 1
+	fi
+
+  echo "create_database: Will create database $database"
+	echo 'CREATE DATABASE IF NOT EXISTS `'${database}'`' | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
+	echo "CREATE USER IF NOT EXISTS '${username}'@'%' IDENTIFIED BY '${password}'" | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
+	echo "GRANT ALL PRIVILEGES ON \`${database}\`.* TO '${username}'@'%'" | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
+	echo 'FLUSH PRIVILEGES' | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
+
+	return 0
+}
 
 set -u
-set +e
 
-if [[ -v DEBUG && ${DEBUG} == "true" ]]; then
-  echo "DATABASE_HOSTNAME: $DATABASE_HOSTNAME"
-  echo "DATABASE_PORT: $DATABASE_PORT"
-  echo "DATABASE_NAME: $DATABASE_NAME"
-  echo "DATABASE_USERNAME: $DATABASE_USERNAME"
-  echo "DATABASE_PASSWORD: $DATABASE_PASSWORD"
-  echo "DATABASE_MASTER_USERNAME: $DATABASE_MASTER_USERNAME"
-  echo "DATABASE_MASTER_PASSWORD: $DATABASE_MASTER_PASSWORD"
-  set -x
-fi
+while ${TRUE}; do
+	date
+	for secret in $(kubectl -n dazzler get secret -l docker-rds=true --no-headers -o name); do
+		echo "Found secret $secret"
+		database=$(kubectl -n dazzler get ${secret} -o jsonpath="{.data.database}" | base64 --decode)
+		username=$(kubectl -n dazzler get ${secret} -o jsonpath="{.data.username}" | base64 --decode)
+		password=$(kubectl -n dazzler get ${secret} -o jsonpath="{.data.password}" | base64 --decode)
+		if [[ $database != "" && $username != "" && $password != "" ]]; then
+			check_database $database $username $password
+			if [[ $? == 0 ]]; then
+				create_database $database $username $password
+			fi
+		else
+			echo "Missing database, username or password in secret $secret"
+		fi
+	done
 
-echo 'CREATE DATABASE IF NOT EXISTS `'${DATABASE_NAME}'`' | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
-echo "CREATE USER IF NOT EXISTS '${DATABASE_USERNAME}'@'%' IDENTIFIED BY '${DATABASE_PASSWORD}'" | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
-echo "GRANT ALL PRIVILEGES ON \`${DATABASE_NAME}\`.* TO '${DATABASE_USERNAME}'@'%'" | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
-echo 'FLUSH PRIVILEGES' | mysql --wait -h ${DATABASE_HOSTNAME} -u ${DATABASE_MASTER_USERNAME} -P ${DATABASE_PORT} -p${DATABASE_MASTER_PASSWORD}
+	sleep 60
+done

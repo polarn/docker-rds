@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-rds
+  namespace: dazzler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docker-rds
+  template:
+    metadata:
+      labels:
+        app: docker-rds
+      annotations:
+        iam.amazonaws.com/role: kubernetes-docker-rds
+    spec:
+      serviceAccountName: docker-rds
+      automountServiceAccountToken: true
+      containers:
+      - name: docker-rds
+        image: polarn/docker-rds:0.0.4-t6
+        imagePullPolicy: Always
+        env:
+        - name: AWS_DEFAULT_REGION
+          value: eu-west-1
+        - name: DATABASE_HOSTNAME
+          valueFrom:
+            secretKeyRef:
+              name: moria
+              key: endpoint
+        - name: DATABASE_MASTER_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: moria
+              key: username
+        - name: DATABASE_MASTER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: moria
+              key: password
