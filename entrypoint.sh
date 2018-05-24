@@ -2,6 +2,12 @@
 
 TRUE=$(which true)
 
+if [[ -z ${NAMESPACE+x} ]]; then
+  NAMESPACE="default"
+fi
+
+echo "Namespace set to ${NAMESPACE}"
+
 if [[ -z ${DATABASE_HOSTNAME+x} ]]; then
   echo "Missing DATABASE_HOSTNAME"
   exit 1
@@ -66,11 +72,11 @@ set -u
 
 while ${TRUE}; do
 	date
-	for secret in $(kubectl -n dazzler get secret -l docker-rds=true --no-headers -o name); do
+	for secret in $(kubectl -n ${NAMESPACE} get secret -l docker-rds=true --no-headers -o name); do
 		echo "Found secret $secret"
-		database=$(kubectl -n dazzler get ${secret} -o jsonpath="{.data.database}" | base64 --decode)
-		username=$(kubectl -n dazzler get ${secret} -o jsonpath="{.data.username}" | base64 --decode)
-		password=$(kubectl -n dazzler get ${secret} -o jsonpath="{.data.password}" | base64 --decode)
+		database=$(kubectl -n ${NAMESPACE} get ${secret} -o jsonpath="{.data.database}" | base64 --decode)
+		username=$(kubectl -n ${NAMESPACE} get ${secret} -o jsonpath="{.data.username}" | base64 --decode)
+		password=$(kubectl -n ${NAMESPACE} get ${secret} -o jsonpath="{.data.password}" | base64 --decode)
 		if [[ $database != "" && $username != "" && $password != "" ]]; then
 			check_database $database $username $password
 			if [[ $? == 0 ]]; then
