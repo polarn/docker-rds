@@ -1,4 +1,11 @@
 # docker-rds
+
+**DEPRECATED**
+
+This has been replaced by [polarn/kubesdb](https://github.com/polarn/kubesdb) instead!
+
+**DEPRECATED**
+
 A docker image to create databases inside an RDS
 
 This is published as a Docker image [polarn/docker-rds](https://hub.docker.com/r/polarn/docker-rds/).
